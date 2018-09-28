@@ -82,3 +82,104 @@ while true; do
     fi
 done
 
+
+
+
+###ssh_hkucs.sh
+try_time="3"
+isPortUsed="-1"
+trap '[ -z `fuser ,,1081/tcp 2>/dev/null` ] && fuser 1081/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null' 0
+while [ $try_time -gt "0" ]
+do
+    read -s -p $'Enter the password: ' input_password
+    echo ''
+    encrypted_input=`echo -n $input_password | sha512sum`
+    if [ "$encrypted_input" != "$encrypted_password" ]
+    then 
+        echo "Incorrect password!"
+        let try_time=try_time-'1'        
+    else
+        #check port 1081
+        isPortUsed=`fuser 1081/tcp 2>/dev/null | cut -f1`
+
+        if [ -z $isPortUsed ]
+        then
+            #port 1081 is not used
+            sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L 1081:academy11.cs.hku.hk:22 -N
+        fi
+        
+        sshpass -p $input_password ssh -p 1081 h3523240@localhost
+
+        break
+    fi
+done
+#######################################
+
+
+###hkucs.sh
+exec 200>~/.hkucs.sh.lock
+flock -xn 200 || { echo "Already connected to hkucs!"; exit 1; }
+trap 'rm ~/.hkucs.sh.lock; fusermount -u ~/h3523240; fuser 44556/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null' 0
+
+try_time="3"
+
+while [ $try_time -gt "0" ]
+do
+    read -s -p $'Enter the password: ' input_password
+    echo ''
+    encrypted_input=`echo -n $input_password | sha512sum`
+    if [ "$encrypted_input" != "$encrypted_password" ]
+    then 
+        echo "Incorrect password!"
+        let try_time=try_time-'1'        
+    else
+        sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L 44556:academy11.cs.hku.hk:22 -N
+        echo $input_password | sshfs -o password_stdin -p 44556 h3523240@localhost:/student/18/ext/h3523240 ~/h3523240
+
+        input_command=""
+        while 
+            [ "$input_command" != "close" ]
+        do
+            read -p "Type \"close\" to disconnect: " input_command
+        done
+
+        
+        
+        break
+    fi
+    
+done
+#############################################
+###carbon.sh
+exec 200>~/.carbon.sh.lock
+flock -xn 200 || { echo "Already connected to carbon!"; exit 1; }
+trap 'fusermount -u ~/carbon;' 0 #rm ~/.carbon.sh.lock;
+
+encrypted_password=''
+
+
+try_time="3"
+while [ $try_time -gt "0" ]
+do
+    read -s -p $'Enter the password: ' input_password
+    echo ''
+    encrypted_input=`echo -n $input_password | sha512sum`
+    if [ "$encrypted_input" != "$encrypted_password" ]
+    then 
+        echo "Incorrect password!"
+        let try_time=try_time-'1'        
+    else
+        echo $input_password | sshfs zhyou@147.8.150.78:/home/zhyou ~/carbon
+
+        input_command=""
+        while 
+            [ "$input_command" != "close" ]
+        do
+            read -p "Type \"close\" to disconnect: " input_command
+        done
+        break
+    fi
+    
+done
+
+#############################################

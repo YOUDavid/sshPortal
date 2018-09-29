@@ -18,36 +18,27 @@ function find_free_port() {
 # $1: lowest known unoccupied port
 # echo: free local port if success, empty otherwise
 # $?: 1 if success, 0 otherwise
-local lowest_known_unoccupied_port=$1
+local return_port=$1
 local grep_result=''
-if [ -z ${lowest_known_unoccupied_port+x} ]; then
-    lowest_known_unoccupied_port=49152
+if [ -z ${return_port+x} ]; then
+    return_port=49152
 fi
-while [ "$lowest_known_unoccupied_port" -le 65535 ]; do
-    grep_result=`netstat -lnt | grep ":$lowest_known_unoccupied_port"`
+while [ "$return_port" -le 65535 ]; do
+    grep_result=`netstat -lnt | grep ":$return_port"`
     if [ -z "$grep_result" ]; then
-        echo $lowest_known_unoccupied_port
+        echo $return_port
         return 0
     fi
-    let lowest_known_unoccupied_port=lowest_known_unoccupied_port+1
+    let return_port=return_port+1
 done
 echo -n ''
 return 1
 }
 
 
-function ssh_connect() {
+#function ssh_connect() {
 
-}
-
-function tes(){
-    if [ -z ${a+x} ]
-    then
-    echo 1
-    else
-    echo 0
-}
-
+#}
 
 
 
@@ -66,17 +57,55 @@ while true; do
     echo '1: ssh connect to a profile'
     echo '2: sshfs mount remote directory'
     echo '3: create profile'    
-    read -s -p $'Please type a number to continue: \n' input_command 
+    read -p $'Please type a number to continue: ' input_command 
     if [ '0' == "$input_command" ]; then
-        declare -p saved_profiles > .ssh_portal.data
-        
+        #declare -p saved_profiles > .ssh_portal.data
         break
     elif [ '1' == "$input_command" ]; then
-        ###TODO: ssh connect a profile
+        try_time=3
+        isPortUsed=-1
+        exit_status=1
+        freeport=`find_free_port $lowest_known_unoccupied_port`
+        echo $freeport
+        if [ $? -gt 0 ]; then
+            echo "Error in finding a free local port!!!"
+            break
+        fi
+        let lowest_known_unoccupied_port=lowest_known_unoccupied_port+1
+        trap "[ $exit_status -gt 0 ] && [ -z \`fuser ,,$freeport/tcp 2>/dev/null\` ] && fuser $freeport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null" 0
+        while [ $try_time -gt "0" ]
+        do
+            read -s -p $'Enter the password: ' input_password
+            echo ''
+            encrypted_input=`echo -n $input_password | sha512sum`
+            encrypted_password=`echo -n $input_password | sha512sum`
+            if [ "$encrypted_input" != "$encrypted_password" ]
+            then 
+                echo "Incorrect password!"
+                let try_time=try_time-1        
+            else
+                #check port 
+                isPortUsed=`fuser $freeport/tcp 2>/dev/null | cut -f1`
+
+                if [ -z $isPortUsed ]
+                then
+                    #port is not used
+                    sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L $freeport:academy11.cs.hku.hk:22 -N -o StrictHostKeyChecking=no
+                fi
+                
+                sshpass -p $input_password ssh -p $freeport h3523240@localhost -o StrictHostKeyChecking=no
+                
+                exit_status=0
+                [ -z `fuser ,,$freeport/tcp 2>/dev/null` ] && fuser $freeport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null
+                break
+            fi
+        done
     elif [ '2' == "$input_command" ]; then
         ###TODO: sshfs mount a profile
+        echo 2
     elif [ '3' == "$input_command" ]; then
         ###TODO: create profile
+        echo 3
     else
         echo "Can not understand command: $input_command !!!"
     fi
@@ -84,37 +113,7 @@ done
 
 
 
-
-###ssh_hkucs.sh
-try_time="3"
-isPortUsed="-1"
-trap '[ -z `fuser ,,1081/tcp 2>/dev/null` ] && fuser 1081/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null' 0
-while [ $try_time -gt "0" ]
-do
-    read -s -p $'Enter the password: ' input_password
-    echo ''
-    encrypted_input=`echo -n $input_password | sha512sum`
-    if [ "$encrypted_input" != "$encrypted_password" ]
-    then 
-        echo "Incorrect password!"
-        let try_time=try_time-'1'        
-    else
-        #check port 1081
-        isPortUsed=`fuser 1081/tcp 2>/dev/null | cut -f1`
-
-        if [ -z $isPortUsed ]
-        then
-            #port 1081 is not used
-            sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L 1081:academy11.cs.hku.hk:22 -N
-        fi
-        
-        sshpass -p $input_password ssh -p 1081 h3523240@localhost
-
-        break
-    fi
-done
-#######################################
-
+:<<!
 
 ###hkucs.sh
 exec 200>~/.hkucs.sh.lock
@@ -183,3 +182,4 @@ do
 done
 
 #############################################
+!

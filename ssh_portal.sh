@@ -23,8 +23,9 @@ local grep_result=''
 if [ -z ${return_port+x} ]; then
     return_port=49152
 fi
+local telnet_result=`netstat -lnt`
 while [ "$return_port" -le 65535 ]; do
-    grep_result=`netstat -lnt | grep ":$return_port"`
+    grep_result=`echo $telnet_result | grep ":$return_port"`
     if [ -z "$grep_result" ]; then
         echo $return_port
         return 0
@@ -35,6 +36,14 @@ echo -n ''
 return 1
 }
 
+function clean_profile(){
+# $1:   name of profile to be cleaned
+    if [ -e $1 ]; then
+        local closingport=`cat $1`
+        [ -z \`fuser ,,$closingport/tcp 2>/dev/null\` ] && fuser $closingport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null\ && rm $1
+    fi
+    return 0
+}
 
 #function ssh_connect() {
 
@@ -43,60 +52,76 @@ return 1
 
 
 ###Global variables
-lowest_known_unoccupied_port=49152
-###saved_profiles format: arr[profile_name] = "user_name|server_name"
 
+###saved_profiles format: saved_profiles[profile_name] = "profile_name|user_name|server_address|firewall_address|encrypted_password"
+echo 'SSH Portal V0.1 by You Zhaohe, 2018'
+if [ -e .ssh_portal.data ]; then 
+    source .ssh_portal.data
+else
+    declare -A saved_profiles
+fi
 while true; do
-    if [ -e .ssh_portal.data ]; then 
-        source .ssh_portal.data
-    else
-        declare -A saved_profiles
-    fi
-    echo 'SSH Portal V0.1 by You Zhaohe, 2018'
     echo '0: exit'
     echo '1: ssh connect to a profile'
     echo '2: sshfs mount remote directory'
     echo '3: create profile'    
-    read -p $'Please type a number to continue: ' input_command 
+    read -p 'Please type a number to continue: ' input_command 
     if [ '0' == "$input_command" ]; then
         #declare -p saved_profiles > .ssh_portal.data
         break
     elif [ '1' == "$input_command" ]; then
-        try_time=3
-        isPortUsed=-1
-        exit_status=1
-        freeport=`find_free_port $lowest_known_unoccupied_port`
-        echo $freeport
-        if [ $? -gt 0 ]; then
-            echo "Error in finding a free local port!!!"
-            break
+        read -p 'Please enter the profile name: ' profile_name
+        if [ -z ${saved_profiles[$profile_name]+dummy} ]; then
+            echo "Can't find such profile: $profile_name"
+            continue
         fi
-        let lowest_known_unoccupied_port=lowest_known_unoccupied_port+1
-        trap "[ $exit_status -gt 0 ] && [ -z \`fuser ,,$freeport/tcp 2>/dev/null\` ] && fuser $freeport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null" 0
+        ###
+        while IFS='|' read user_name server_address firewall_address encrypted_password <<< `echo ${saved_profiles[$profile_name]}`
+        do
+            break
+        done
+        
+        try_time=3
+        isPortUsed=-1        
         while [ $try_time -gt "0" ]
         do
             read -s -p $'Enter the password: ' input_password
-            echo ''
             encrypted_input=`echo -n $input_password | sha512sum`
-            encrypted_password=`echo -n $input_password | sha512sum`
             if [ "$encrypted_input" != "$encrypted_password" ]
             then 
                 echo "Incorrect password!"
                 let try_time=try_time-1        
             else
                 #check port 
-                isPortUsed=`fuser $freeport/tcp 2>/dev/null | cut -f1`
+                #isPortUsed=`fuser $freeport/tcp 2>/dev/null | cut -f1`
 
-                if [ -z $isPortUsed ]
+                if [ -z ".ssh_portal.active.$profile_name" ]
                 then
-                    #port is not used
-                    sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L $freeport:academy11.cs.hku.hk:22 -N -o StrictHostKeyChecking=no
+                    #This is the first active profile of the same ones
+                    freeport=`find_free_port`
+                    if [ $? -gt 0 ]; then
+                        echo "Error in finding a free local port!!!"
+                        break
+                    fi
+                    
+                    #Close the tunnel after no connection is made to the local port and even if the terminal was closed by other means
+                    #trap "[ -z \`fuser ,,$freeport/tcp 2>/dev/null\` ] && fuser $freeport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null" 0
+                    trap "clean_profile $profile_name" 0
+                    if [ -z firewall_address ]; then
+                        sshpass -p $input_password ssh -L $freeport:$server_address:22 -N -o StrictHostKeyChecking=no
+                    else
+                        sshpass -p $input_password ssh -f $user_name@$firewall_address -L $freeport:$server_address:22 -N -o StrictHostKeyChecking=no
+                    fi
+                    echo -n $freeport > .ssh_portal.active.$profile_name
+                else
+                    freeport=`cat .ssh_portal.active.$profile_name`
                 fi
                 
-                sshpass -p $input_password ssh -p $freeport h3523240@localhost -o StrictHostKeyChecking=no
+                sshpass -p $input_password ssh -p $freeport $user_name@localhost -o StrictHostKeyChecking=no
                 
                 exit_status=0
-                [ -z `fuser ,,$freeport/tcp 2>/dev/null` ] && fuser $freeport/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null
+                #Close the tunnel after no connection is made to the local port
+                clean_profile $profile_name
                 break
             fi
         done
@@ -105,7 +130,32 @@ while true; do
         echo 2
     elif [ '3' == "$input_command" ]; then
         ###TODO: create profile
-        echo 3
+        read -p 'Please enter the new profile name: ' profile_name
+        while [ ! -z ${saved_profiles[$profile_name]+dummy} ]; do
+            echo echo "Duplicated name of profile: $profile_name"
+            read -p 'Please enter the new profile name: ' profile_name
+        done
+        read -p 'Please enter the user name: ' user_name
+        while [ -z $user_name ]; do
+            echo echo 'No user name was provided!!!'
+            read -p 'Please enter the user name: ' user_name
+        done
+        read -p 'Please enter the server address: ' server_address
+        while [ -z $server_address ]; do
+            echo echo 'No server address was provided!!!'
+            read -p 'Please enter the server address: ' server_address
+        done
+        read -p 'Please enter the firewall address (empty for not using firewall): ' firewall_address
+        read -s -p 'Enter the password: ' encrypted_password
+        encrypted_password=`echo -n $encrypted_password | sha512sum`
+        saved_profiles[$profile_name]="$profile_name|$user_name|$server_address|$firewall_address|$encrypted_password"
+        unset profile_name
+        unset user_name
+        unset server_address
+        unset firewall_address
+        unset encrypted_password
+        fi 
+        
     else
         echo "Can not understand command: $input_command !!!"
     fi
@@ -113,73 +163,72 @@ done
 
 
 
-:<<!
 
-###hkucs.sh
-exec 200>~/.hkucs.sh.lock
-flock -xn 200 || { echo "Already connected to hkucs!"; exit 1; }
-trap 'rm ~/.hkucs.sh.lock; fusermount -u ~/h3523240; fuser 44556/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null' 0
+# ###hkucs.sh
+# exec 200>~/.hkucs.sh.lock
+# flock -xn 200 || { echo "Already connected to hkucs!"; exit 1; }
+# trap 'rm ~/.hkucs.sh.lock; fusermount -u ~/h3523240; fuser 44556/tcp 2>/dev/null | cut -f1 | xargs -i kill {} 2>/dev/null' 0
 
-try_time="3"
+# try_time="3"
 
-while [ $try_time -gt "0" ]
-do
-    read -s -p $'Enter the password: ' input_password
-    echo ''
-    encrypted_input=`echo -n $input_password | sha512sum`
-    if [ "$encrypted_input" != "$encrypted_password" ]
-    then 
-        echo "Incorrect password!"
-        let try_time=try_time-'1'        
-    else
-        sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L 44556:academy11.cs.hku.hk:22 -N
-        echo $input_password | sshfs -o password_stdin -p 44556 h3523240@localhost:/student/18/ext/h3523240 ~/h3523240
+# while [ $try_time -gt "0" ]
+# do
+    # read -s -p $'Enter the password: ' input_password
+    # echo ''
+    # encrypted_input=`echo -n $input_password | sha512sum`
+    # if [ "$encrypted_input" != "$encrypted_password" ]
+    # then 
+        # echo "Incorrect password!"
+        # let try_time=try_time-'1'        
+    # else
+        # sshpass -p $input_password ssh -f h3523240@gatekeeper.cs.hku.hk -L 44556:academy11.cs.hku.hk:22 -N
+        # echo $input_password | sshfs -o password_stdin -p 44556 h3523240@localhost:/student/18/ext/h3523240 ~/h3523240
 
-        input_command=""
-        while 
-            [ "$input_command" != "close" ]
-        do
-            read -p "Type \"close\" to disconnect: " input_command
-        done
+        # input_command=""
+        # while 
+            # [ "$input_command" != "close" ]
+        # do
+            # read -p "Type \"close\" to disconnect: " input_command
+        # done
 
         
         
-        break
-    fi
+        # break
+    # fi
     
-done
-#############################################
-###carbon.sh
-exec 200>~/.carbon.sh.lock
-flock -xn 200 || { echo "Already connected to carbon!"; exit 1; }
-trap 'fusermount -u ~/carbon;' 0 #rm ~/.carbon.sh.lock;
+# done
+# #############################################
+# ###carbon.sh
+# exec 200>~/.carbon.sh.lock
+# flock -xn 200 || { echo "Already connected to carbon!"; exit 1; }
+# trap 'fusermount -u ~/carbon;' 0 #rm ~/.carbon.sh.lock;
 
-encrypted_password=''
+# encrypted_password=''
 
 
-try_time="3"
-while [ $try_time -gt "0" ]
-do
-    read -s -p $'Enter the password: ' input_password
-    echo ''
-    encrypted_input=`echo -n $input_password | sha512sum`
-    if [ "$encrypted_input" != "$encrypted_password" ]
-    then 
-        echo "Incorrect password!"
-        let try_time=try_time-'1'        
-    else
-        echo $input_password | sshfs zhyou@147.8.150.78:/home/zhyou ~/carbon
+# try_time="3"
+# while [ $try_time -gt "0" ]
+# do
+    # read -s -p $'Enter the password: ' input_password
+    # echo ''
+    # encrypted_input=`echo -n $input_password | sha512sum`
+    # if [ "$encrypted_input" != "$encrypted_password" ]
+    # then 
+        # echo "Incorrect password!"
+        # let try_time=try_time-'1'        
+    # else
+        # echo $input_password | sshfs zhyou@147.8.150.78:/home/zhyou ~/carbon
 
-        input_command=""
-        while 
-            [ "$input_command" != "close" ]
-        do
-            read -p "Type \"close\" to disconnect: " input_command
-        done
-        break
-    fi
+        # input_command=""
+        # while 
+            # [ "$input_command" != "close" ]
+        # do
+            # read -p "Type \"close\" to disconnect: " input_command
+        # done
+        # break
+    # fi
     
-done
+# done
 
-#############################################
-!
+# #############################################
+

@@ -60,7 +60,6 @@ if [ -e .ssh_portal.data ]; then
 else
     declare -A saved_profiles
 fi
-trap "declare -p saved_profiles > .ssh_portal.data" 0
 while true; do
     echo '0: exit'
     echo '1: ssh connect to a profile'
@@ -77,7 +76,6 @@ while true; do
             echo "Can't find such profile: $profile_name"
             continue
         fi
-        ###
         while IFS='|' read profile_name user_name server_address firewall_address encrypted_password <<< `echo ${saved_profiles[$profile_name]}`
         do
             break
@@ -143,11 +141,11 @@ while true; do
         exec 200>~/.ssh_portal.mount.$profile_name
         flock -xn 200 || { echo "Already connected to carbon!!!"; continue; }
         
-        if [ -d "~/$user_name@$profile_name" ]; then
+        if [ -d ~/$user_name@$profile_name ]; then
             echo "Directory to be mounted already exists!!!"
             continue
         else
-            mkdir ~/"$user_name"@"$profile_name"
+            mkdir ~/$user_name@$profile_name
         fi
         
         try_time="3"
@@ -182,7 +180,8 @@ while true; do
                 fi
                 trap "clean_profile $profile_name" 0
                 remote_home=`sshpass -p $input_password ssh -p $freeport $user_name@localhost -o StrictHostKeyChecking=no 'echo $HOME'`
-                echo $input_password | sshfs -o password_stdin -p $freeport "$user_name@localhost:$remote_home" "~/$user_name@$profile_name"
+                echo $input_password | sshfs -o password_stdin -p $freeport "$user_name@localhost:$remote_home" ~/$user_name@$profile_name
+                break
             fi
         done
     elif [ '3' == "$input_command" ]; then
@@ -229,6 +228,7 @@ while true; do
         echo ''
         encrypted_password=`echo -n $encrypted_password | sha512sum | cut -d' ' -f1`
         saved_profiles[$profile_name]="$profile_name|$user_name|$server_address|$firewall_address|$encrypted_password"
+        declare -p saved_profiles > .ssh_portal.data
         unset profile_name
         unset user_name
         unset server_address
